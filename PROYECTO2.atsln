@@ -1,22 +1,394 @@
-﻿
-Microsoft Visual Studio Solution File, Format Version 12.00
-# Atmel Studio Solution File, Format Version 11.00
-VisualStudioVersion = 14.0.23107.0
-MinimumVisualStudioVersion = 10.0.40219.1
-Project("{18226A42-8477-4023-8AD2-40C49DA407C9}") = "POYECTO2", "Lab3\POYECTO2.asmproj", "{59B1D629-9DCC-43ED-A0FD-8AB0E4D622AB}"
-EndProject
-Global
-	GlobalSection(SolutionConfigurationPlatforms) = preSolution
-		Debug|AVR = Debug|AVR
-		Release|AVR = Release|AVR
-	EndGlobalSection
-	GlobalSection(ProjectConfigurationPlatforms) = postSolution
-		{59B1D629-9DCC-43ED-A0FD-8AB0E4D622AB}.Debug|AVR.ActiveCfg = Debug|AVR
-		{59B1D629-9DCC-43ED-A0FD-8AB0E4D622AB}.Debug|AVR.Build.0 = Debug|AVR
-		{59B1D629-9DCC-43ED-A0FD-8AB0E4D622AB}.Release|AVR.ActiveCfg = Release|AVR
-		{59B1D629-9DCC-43ED-A0FD-8AB0E4D622AB}.Release|AVR.Build.0 = Release|AVR
-	EndGlobalSection
-	GlobalSection(SolutionProperties) = preSolution
-		HideSolutionNode = FALSE
-	EndGlobalSection
-EndGlobal
+;
+; Proyecto.asm
+;
+; Created: 27/02/2024 12:10:29 p. m.
+; Author : e-mel
+;
+
+
+; Replace with your application code
+//Encabezado
+.include "M328PDEF.inc"
+.def MODO = R19
+.def ESTADO = R28
+
+.cseg
+.org 0x00 //vector reset
+JMP Config
+.org 0x08 //vector interrupcion puertoC
+JMP PC_Int
+.org 0x0020  //vector interrupcion timer0
+JMP TIMER0
+
+//Config STACK POINTER
+Config:
+LDI R16, LOW(RAMEND)
+OUT SPL, R16
+LDI R17, HIGH(RAMEND)
+OUT SPH, R17
+
+//Tabla																	;"9"
+TABLA7SEG: .DB 0x3F, 0x06, 0x5B, 0x4F, 0x66, 0x6D, 0x7D, 0x07, 0x7F, 0x6F;, 0x77, 0x7C, 0x39, 0x5E, 0x79, 0x71
+
+
+//I/O Ports
+Setup:
+	LDI R16, 0b1000_0000//(1<<CLKPCE)
+	STS CLKPR, R16
+	
+	LDI R16, 0b0000_0001
+	STS CLKPR, R16
+	//Puerto C como entrada pullup
+	LDI R16, 0b0000_0000
+	OUT DDRC, R16
+	LDI R16, 0b0000_0000
+	OUT PORTC, R16
+	//Puerto B y D como salidas
+	LDI R16, 0b1111_1111 
+	OUT DDRB, R16
+	OUT DDRD, R16
+	//Establecer Rx y Tx como salida
+	LDI R16,0x00
+	STS UCSR0B, R16
+	OUT	PORTD, R16
+	//Interrupciones
+	//Botones
+	LDI R16, 0b0001_1111
+	STS PCMSK1, R16
+
+	LDI R16, (1<<PCIE1)
+	STS PCICR, R16
+	//T0
+	LDI R16, (1<<TOIE0)
+	STS TIMSK0, R16
+
+	SEI
+
+	RCALL INIT_T0
+
+	LDI R18, 0 //Pointer uni min (1ER DIG)
+	LDI R19, 0 //MODO
+	LDI R20, 0 //Pointer uni hora (3ER DIG)
+	LDI R21, 0 //Contador uni min
+	LDI R22, 0 //Pointer dec min (2DO DIG)
+	LDI R23, 0 //Contador uni hora
+	LDI R24, 0 //Contador dec min
+
+	LDI R26, 0 //Pointer dec hora (4TO DIG)
+	LDI R27, 0 //Contador dec hora
+	LDI R28, 0	//ESTADO
+
+	LDI MODO, 0
+	LDI ESTADO, 0
+
+	LDI ZL, LOW(TABLA7SEG << 1)
+	LDI ZH, HIGH(TABLA7SEG << 1)
+	LPM R21, Z
+	OUT PORTD, R21
+
+	LDI ZL, LOW(TABLA7SEG << 1)
+	LDI ZH, HIGH(TABLA7SEG << 1)
+	LPM R24, Z
+	OUT PORTD, R24
+
+	LDI ZL, LOW(TABLA7SEG << 1)
+	LDI ZH, HIGH(TABLA7SEG << 1)
+	LPM R23, Z
+	OUT PORTD, R23
+
+	LDI ZL, LOW(TABLA7SEG << 1)
+	LDI ZH, HIGH(TABLA7SEG << 1)
+	LPM R27, Z
+	OUT PORTD, R27
+
+Loop:
+//comparamos siempre en que modo estamos
+	CPI MODO, 0
+	BREQ irHORA
+	CPI MODO, 1
+	BREQ irFECHA
+	CPI MODO, 2
+	BREQ irALARM
+	RJMP Loop
+//para evitar problemas de lejania, jmps indirectos
+	irHORA:
+		RJMP HORA
+	irFECHA:
+		RJMP FECHA
+	irALARM:
+		RJMP ALARM
+
+	
+HORA:
+	RCALL OUTH //salidas de transistores y puertoD
+
+	
+	
+	INCRE:
+		CPI R18, 10 //compara unidades de minuto para reset
+		BREQ Reset //salto a reset para sumar la hora
+		LDI ZL, LOW (TABLA7SEG << 1)
+		LDI ZH, HIGH (TABLA7SEG << 1)
+		ADD ZL, R18
+		LPM R21, Z
+
+		LDI ZL, LOW (TABLA7SEG << 1)
+		LDI ZH, HIGH (TABLA7SEG << 1)
+		ADD ZL, R22
+		LPM R24, Z
+
+		LDI ZL, LOW (TABLA7SEG << 1)
+		LDI ZH, HIGH (TABLA7SEG << 1)
+		ADD ZL, R20
+		LPM R23, Z
+
+		LDI ZL, LOW (TABLA7SEG << 1)
+		LDI ZH, HIGH (TABLA7SEG << 1)
+		ADD ZL, R26
+		LPM R27, Z
+
+	Reset: //Reset unidades 1Dig 
+		LDI R18, 0
+		INC R22
+		CPI R22, 6 //Compara Decenas min para reset
+		BREQ Reset2 //regresa a loop
+		INCRE2:
+		RJMP LOOP
+	Reset2: //Reset decenas 2Dig
+		LDI R22, 0
+		CPI R26, 2 //Compara Decenas hora para evitar numeros mayores de 23
+		BREQ NEXT //si decenas hora es 0,1 seguimos normal y poder mostrar "9"
+		NEXT2:
+		INC R20
+		CPI R20, 10 //Compara unidades hora para reset
+		BREQ Reset3 
+		INCRE3: //regresa a loop
+		RJMP INCRE2
+	Reset3: //Reset 3Dig
+		LDI R20, 0
+		INC R26
+		RJMP INCRE2
+		NEXT: //Si esta 2x el programa salta hasta aca para evitar mostrar 24, 25 etc
+		INC R20
+		CPI R20, 4  //Compara unidades hora para reset
+		BREQ Reset4
+		INCRE4:  //regresa a loop
+		RJMP INCRE2
+	Reset4: //Reset 4Dig
+		LDI R26, 0
+		LDI R20, 0
+		RJMP INCRE2 //regresa a loop
+
+	OUTH:
+	//Seleccionar 4to transistor
+	LDI R16, 0x08 //primer digito
+	OUT PORTB, R16
+	OUT PORTD, R21
+
+	RCALL Delay1
+
+	//Seleccionar 3ro transistor
+	LDI R16, 0x04 //segundo digito
+	OUT PORTB, R16
+	OUT PORTD, R24
+
+	RCALL Delay1
+/*
+	LDI R16, 0x0C //segundo digito
+	OUT PORTB, R16
+	LDI R16, 0xF0
+	OUT PORTD, R16
+
+	RCALL Delay1
+*/
+	//Seleccionar 2d0 transistor
+	LDI R16, 0x02 //tercer digito
+	OUT PORTB, R16
+	OUT PORTD, R23
+
+	RCALL Delay1
+
+	//Seleccionar 1er transistor
+	LDI R16, 0x01 //cuarto digito
+	OUT PORTB, R16
+	OUT PORTD, R27
+
+	RCALL Delay1
+
+	RET
+
+//INT
+TIMER0: //interrupcion del timer0
+	PUSH R16
+	IN R16, SREG
+	PUSH R16
+	PUSH R17
+
+	LDI R29, 178
+	OUT TCNT0, R29
+
+	LDI R17, 0
+	INC R25
+	CPI R25, 255 //100 =SEG
+	BRNE REGR
+	CLR R25
+	INC R17
+	CPI R17, 255
+	BRNE REGR
+	CLR R17
+	INC R18 //cuando pase el tiempo este incrementera el r18 el cual es el pointer de la unidad de minutos
+
+REGR:
+	POP R16
+	OUT SREG, R16
+	POP R16
+	POP R17
+	RETI
+
+
+FECHA: //modo fecha empezando con 01/01
+	LDI R18, 1
+	LDI R22, 0
+	LDI R20, 1
+	LDI R26, 0
+
+		LDI ZL, LOW (TABLA7SEG << 1) //comprobar pointers
+		LDI ZH, HIGH (TABLA7SEG << 1)
+		ADD ZL, R18
+		LPM R21, Z
+
+		LDI ZL, LOW (TABLA7SEG << 1)
+		LDI ZH, HIGH (TABLA7SEG << 1)
+		ADD ZL, R22
+		LPM R24, Z
+
+		LDI ZL, LOW (TABLA7SEG << 1)
+		LDI ZH, HIGH (TABLA7SEG << 1)
+		ADD ZL, R20
+		LPM R23, Z
+
+		LDI ZL, LOW (TABLA7SEG << 1)
+		LDI ZH, HIGH (TABLA7SEG << 1)
+		ADD ZL, R26
+		LPM R27, Z
+
+	RCALL OUTH //salidas a transistores y pd
+	RCALL INCRE
+	RJMP Loop
+
+
+ALARM: //modo alarma empezando 00:00
+	LDI R18, 0
+	LDI R22, 0
+	LDI R20, 0
+	LDI R26, 0
+	CPI ESTADO, 0
+	BREQ NEXT1
+	CPI ESTADO, 1
+	BREQ EDIT
+
+	NEXT1: //comprobar pointers
+		LDI ZL, LOW (TABLA7SEG << 1)
+		LDI ZH, HIGH (TABLA7SEG << 1)
+		ADD ZL, R18
+		LPM R21, Z
+
+		LDI ZL, LOW (TABLA7SEG << 1)
+		LDI ZH, HIGH (TABLA7SEG << 1)
+		ADD ZL, R22
+		LPM R24, Z
+
+		LDI ZL, LOW (TABLA7SEG << 1)
+		LDI ZH, HIGH (TABLA7SEG << 1)
+		ADD ZL, R20
+		LPM R23, Z
+
+		LDI ZL, LOW (TABLA7SEG << 1)
+		LDI ZH, HIGH (TABLA7SEG << 1)
+		ADD ZL, R26
+		LPM R27, Z
+
+	RCALL OUTH //salidas a transistores y pd
+	RJMP Loop
+
+	EDIT: //logica para poder editar los valores (no funciona)
+		IN R19, PINC
+		SBRC R19, PC1
+		RJMP SUMA
+		SBRC R19, PC0
+		RJMP RESTA
+		RJMP EDIT
+	RCALL OUTH
+	RJMP Loop
+	SUMA:
+		INC R18
+		CPI R18, 9
+		BREQ RESETS
+		EX:
+		RET
+		RESETS:
+			CLR R18
+			RJMP EX
+	RESTA:
+		DEC R18
+		SBRC R18, 0
+		CLR R18
+		RET
+
+	
+
+INIT_T0: //Interrupcion de Timer0
+	LDI R16, (1<<CS02)|(1<<CS00) //Pre escalado a 1024
+	OUT TCCR0B, R16
+	LDI R29, 178
+	OUT TCNT0, R29
+	RET
+
+Delay1: //delay que hace la ilusion de mostrar los 4 displays
+	LDI R16, 255
+	LDI R17, 255
+	BUCLE:
+		DEC R16
+		BRNE BUCLE
+		LDI R16, 255
+		DEC R17
+		BRNE BUCLE
+		RET
+		 
+PC_Int: //interrupcion del puertoC
+	PUSH R16
+	IN R16, SREG
+	PUSH R16
+	PUSH R17
+
+	IN R16, PINC
+	SBRC R16, PC4 //si se presiona el 5to boton cambiar modo
+	RJMP CMBMOD
+	SBRC R16, PC3 //si se presiona el 4to boton cambiar estado
+	RJMP CAMBEST
+	RJMP SALIRPC
+
+	CMBMOD: //logica para cambiar modo
+		INC MODO
+		CPI MODO, 3 //comparamos 3 para resetear el modo a 0
+		BREQ RESETM
+		SALIRPC: //salida de la interrupcion
+		SBI PCIFR, PCIF1
+		POP R16
+		OUT SREG, R16
+		POP R16
+		POP R17
+		RETI
+		RESETM: //reset modo
+			LDI MODO, 0
+			RJMP SALIRPC
+
+	CAMBEST: //logica para cambiar estado
+		INC ESTADO
+		CPI ESTADO, 2 //comparamos 2 para resetear el estado a 0
+		BREQ RESETEST
+		RJMP SALIRPC //salida de la interrupcion
+		RESETEST:
+			LDI ESTADO, 0 //reset estado
+			RJMP SALIRPC
+	
